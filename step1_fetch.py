@@ -1,23 +1,30 @@
 import feedparser
 import time
+import calendar
 import re
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import config
 from database_manager import get_db
 
 def extract_image(entry):
     """Trích xuất link ảnh từ entry của RSS"""
-    # 1. Thử lấy từ media_thumbnail (phổ biến ở một số RSS)
+    # 1. Thử lấy từ media_content (NYT sử dụng cái này)
+    if 'media_content' in entry:
+        for media in entry.media_content:
+            if media.get('medium') == 'image' or media.get('type', '').startswith('image/'):
+                return media.get('url')
+
+    # 2. Thử lấy từ media_thumbnail (phổ biến ở một số RSS)
     if 'media_thumbnail' in entry and len(entry.media_thumbnail) > 0:
         return entry.media_thumbnail[0].get('url')
     
-    # 2. Thử lấy từ enclosures
+    # 3. Thử lấy từ enclosures
     if 'enclosures' in entry:
         for enc in entry.enclosures:
             if enc.get('type', '').startswith('image/'):
                 return enc.get('url')
     
-    # 3. Phổ biến nhất ở VNExpress/Cafef: Link ảnh nằm trong description
+    # 4. Phổ biến nhất ở VNExpress/Cafef: Link ảnh nằm trong description
     description = entry.get('description', '')
     if description:
         # Tìm tag <img src="...">
@@ -34,6 +41,7 @@ def fetch_rss():
 
     new_articles_count = 0
     total_articles = 0
+    skipped_count = 0
     
     with get_db() as conn:
         with conn.cursor() as cur:
@@ -50,7 +58,17 @@ def fetch_rss():
                         title = entry.get('title', 'No Title')
                         link = entry.get('link', '')
                         published_parsed = entry.get('published_parsed')
-                        published_date = datetime.fromtimestamp(time.mktime(published_parsed)) if published_parsed else datetime.now()
+                        published_parsed = entry.get('published_parsed')
+                        if published_parsed:
+                            published_date = datetime.fromtimestamp(calendar.timegm(published_parsed), tz=timezone.utc).replace(tzinfo=None)
+                        else:
+                            published_date = datetime.now(timezone.utc).replace(tzinfo=None)
+                        
+                        # Chỉ lấy bài trong vòng 24h qua (So sánh ở UTC)
+                        if datetime.now(timezone.utc).replace(tzinfo=None) - published_date > timedelta(hours=24):
+                            skipped_count += 1
+                            continue
+                            
                         source = rss_url
                         image_url = extract_image(entry)
 
@@ -76,7 +94,7 @@ def fetch_rss():
             
             conn.commit()
 
-    print(f"✅ Đã cập nhật database: +{new_articles_count} bài mới (Tổng quét: {total_articles})")
+    print(f"✅ Đã cập nhật database: +{new_articles_count} bài mới (Tổng quét: {total_articles}, Bỏ qua: {skipped_count} bài cũ)")
     
     return total_articles, new_articles_count
 

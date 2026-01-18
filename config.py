@@ -1,9 +1,9 @@
 import os
 
 # --- Chế độ chạy ---
-TEST_MODE = True  # Chuyển thành False khi chạy thật
-TEST_LIMIT = 3    # Số lượng bài tối đa lấy từ mỗi nguồn khi ở chế độ TEST
-TEST_RANDOM = True # Nếu True, trong mode TEST sẽ chọn bài ngẫu nhiên thay vì bài mới nhất
+TEST_MODE = False  # Chuyển thành False khi chạy thật
+TEST_LIMIT = 50    # Số lượng bài tối đa lấy từ mỗi nguồn khi ở chế độ TEST
+TEST_RANDOM = False # Nếu True, trong mode TEST sẽ chọn bài ngẫu nhiên thay vì bài mới nhất
 USE_SSH_TUNNEL = True # TRUE khi chạy ở Local Mac, FALSE khi chạy ở VPS
 
 # --- Cấu hình chung ---
@@ -25,13 +25,20 @@ HISTORY_FILE = os.path.join(DATA_DIR, "processed_history.json")
 RSS_URLS = [
     "https://cafef.vn/tai-chinh-quoc-te.rss",
     "https://vnexpress.net/rss/kinh-doanh.rss",
-    "https://rss.nytimes.com/services/xml/rss/nyt/Business.xml"
+    "https://rss.nytimes.com/services/xml/rss/nyt/Business.xml",
+    "https://cafebiz.vn/rss/chung-khoan.rss",
+    "https://rss.nytimes.com/services/xml/rss/nyt/Economy.xml"
 ]
 
-# --- Gemini Config ---
-GEMINI_MODEL = "gemini-2.5-pro"
-# Có thể dùng model rẻ hơn cho bước lọc tin nếu muốn tiết kiệm
-FILTER_MODEL = "gemini-2.5-flash" 
+# --- AI CLI Config ---
+AI_ENGINE = "hybrid" # Hoặc "gemini", "codex", "hybrid"
+
+# Gemini Settings
+GEMINI_MODEL = "gemini-3-pro-preview"
+FILTER_MODEL = "gemini-3-flash-preview" 
+
+# Codex Settings
+CODEX_MODEL = "gpt-5.2"
 IMPORTANCE_THRESHOLD = 7 # Điểm tối thiểu (1-10) để lấy bài báo
 
 # --- Scraping Config ---

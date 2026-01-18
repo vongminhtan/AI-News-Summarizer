@@ -1,8 +1,9 @@
 import concurrent.futures
 import json
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 import config
-from gemini_helper import call_gemini_cli
+import random
+from ai_helper import call_ai_cli
 from models import ArticleAnalysis, ArticleTags, DailyInsight
 from database_manager import get_db
 
@@ -44,7 +45,7 @@ def analyze_single_article(article_row):
     """
     
     try:
-        response = call_gemini_cli(prompt, model=config.GEMINI_MODEL)
+        response = call_ai_cli(prompt, model=config.GEMINI_MODEL)
         cleaned = response.replace("```json", "").replace("```", "").strip()
         data = json.loads(cleaned)
         
@@ -90,7 +91,7 @@ def generate_daily_insights(analyzed_articles):
     
     Yêu cầu Output JSON (không markdown):
     {{
-        "date": "{date.today()}",
+        "date": "{datetime.now(timezone.utc).date()}",
         "main_trends": ["Xu hướng chính 1", "Xu hướng chính 2"],
         "hidden_insights": ["Insight không hiển nhiên mà bạn nhận ra từ dữ liệu trên"],
         "media_steering_analysis": "Phân tích xem truyền thông đang muốn lái dư luận theo hướng nào (FUD, FOMO, hay Thận trọng).",
@@ -100,7 +101,7 @@ def generate_daily_insights(analyzed_articles):
     """
     
     try:
-        response = call_gemini_cli(prompt, model=config.GEMINI_MODEL)
+        response = call_ai_cli(prompt, model=config.GEMINI_MODEL)
         cleaned = response.replace("```json", "").replace("```", "").strip()
         data = json.loads(cleaned)
         
@@ -112,75 +113,97 @@ def generate_daily_insights(analyzed_articles):
 def generate_report():
     print("\n--- [Step 4] Analyzing & Reporting ---")
     
-    processed_analyses = []
+    all_processed_analyses = []
     
     with get_db() as conn:
         with conn.cursor() as cur:
             # 1. Get articles available for analysis
-            cur.execute("SELECT url, title, content, published_date FROM articles WHERE status = 'scraped'")
-            rows = cur.fetchall() # [(url, title, content, date), ...]
+            cur.execute("""
+                SELECT url, title, content, published_date 
+                FROM articles 
+                WHERE status = 'scraped' 
+                AND published_date >= (NOW() AT TIME ZONE 'UTC') - INTERVAL '24 hours'
+            """)
+            rows = cur.fetchall()
+            
+            # GIỚI HẠN TRONG TEST MODE
+            if config.TEST_MODE:
+                if config.TEST_RANDOM:
+                    print(f"🛠️ [TEST MODE] Lấy ngẫu nhiên {config.TEST_LIMIT} bài để phân tích.")
+                    random.shuffle(rows)
+                else:
+                    print(f"🛠️ [TEST MODE] Lấy {config.TEST_LIMIT} bài mới nhất để phân tích.")
+                rows = rows[:config.TEST_LIMIT]
             
             if not rows:
                 print("⚠️ Không có bài báo nào cần phân tích (status='scraped').")
                 return
-
-            print(f"🔍 Bắt đầu phân tích {len(rows)} bài báo (Parallel)...")
+ 
+            total_articles = len(rows)
+            print(f"🔍 Bắt đầu phân tích {total_articles} bài báo (6 Hybrid workers, update immediately)...")
             
-            # 2. Analyze Parallel
-            with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
-                results = list(executor.map(analyze_single_article, rows))
-            
-            # 3. Save Analysis Results to DB
-            count_success = 0
-            for res in results:
-                if res:
-                    processed_analyses.append(res)
+            # 2. Analyze & Save sequentially as tasks complete
+            with concurrent.futures.ThreadPoolExecutor(max_workers=6) as executor:
+                # Submit all tasks
+                future_to_url = {executor.submit(analyze_single_article, row): row[0] for row in rows}
+                
+                count = 0
+                for future in concurrent.futures.as_completed(future_to_url):
+                    url = future_to_url[future]
+                    count += 1
                     try:
-                        cur.execute("""
-                            UPDATE articles
-                            SET summary = %s, tags = %s::jsonb, author_intent = %s, 
-                                impact_analysis = %s, analyzed_at = %s, model_version = %s, 
-                                language = %s, importance_score = %s, origin = %s, 
-                                status = 'analyzed'
-                            WHERE url = %s
-                        """, (
-                            res.summary,
-                            res.tags.model_dump_json(), # Pydantic to JSON string
-                            res.author_intent,
-                            res.impact_analysis,
-                            res.analyzed_at,
-                            res.model_version,
-                            res.language,
-                            res.importance_score,
-                            res.origin,
-                            res.url
-                        ))
-                        count_success += 1
+                        res = future.result()
+                        if res:
+                            all_processed_analyses.append(res)
+                            # Update DB immediately for this article
+                            cur.execute("""
+                                UPDATE articles
+                                SET summary = %s, tags = %s::jsonb, author_intent = %s, 
+                                    impact_analysis = %s, analyzed_at = %s, model_version = %s, 
+                                    language = %s, importance_score = %s, origin = %s, 
+                                    status = 'analyzed'
+                                WHERE url = %s
+                            """, (
+                                res.summary,
+                                res.tags.model_dump_json(),
+                                res.author_intent,
+                                res.impact_analysis,
+                                res.analyzed_at, # res.analyzed_at is already UTC from get_now_utc()
+                                res.model_version,
+                                res.language,
+                                res.importance_score,
+                                res.origin,
+                                res.url
+                            ))
+                            conn.commit() # Commit ngay lập tức
+                            print(f"  ✅ [{count}/{total_articles}] Analyzed & Saved: {res.title[:50]}...")
+                        else:
+                            print(f"  ⚠️ [{count}/{total_articles}] Failed analysis for: {url}")
+                            
                     except Exception as e:
-                        print(f"❌ DB Error saving analysis for {res.url}: {e}")
+                        print(f"  ❌ [{count}/{total_articles}] Unexpected error for {url}: {e}")
             
-            conn.commit()
-            print(f"✅ Đã phân tích và lưu {count_success} bài.")
+            print(f"🎉 Hoàn tất phân tích {len(all_processed_analyses)}/{total_articles} bài.")
 
             # 4. Generate Daily Insights (from ALL articles analyzed in last 24h)
             
-            if processed_analyses:
+            if all_processed_analyses:
                 print("🧠 Đang tổng hợp Insight thị trường...")
-                daily_insight = generate_daily_insights(processed_analyses)
+                daily_insight = generate_daily_insights(all_processed_analyses)
                 
                 if daily_insight:
                     # Save Insight to DB
                     try:
                         cur.execute("""
                             INSERT INTO daily_insights (date, main_trends, hidden_insights, media_steering_analysis, hot_topics, market_sentiment_overlay, created_at)
-                            VALUES (%s, %s::jsonb, %s::jsonb, %s, %s::jsonb, %s, NOW())
+                            VALUES (%s, %s::jsonb, %s::jsonb, %s, %s::jsonb, %s, NOW() AT TIME ZONE 'UTC')
                             ON CONFLICT (date) DO UPDATE SET
                                 main_trends = EXCLUDED.main_trends,
                                 hidden_insights = EXCLUDED.hidden_insights,
                                 media_steering_analysis = EXCLUDED.media_steering_analysis,
                                 hot_topics = EXCLUDED.hot_topics,
                                 market_sentiment_overlay = EXCLUDED.market_sentiment_overlay,
-                                created_at = NOW();
+                                created_at = NOW() AT TIME ZONE 'UTC';
                         """, (
                             daily_insight.date,
                             json.dumps(daily_insight.main_trends, ensure_ascii=False),
@@ -192,20 +215,20 @@ def generate_report():
                         conn.commit()
                         print("✅ Đã lưu Daily Insight vào Database.")
                         
-                        # Generate Markdown Report
-                        report_file = f"daily_report_{daily_insight.date}.md"
-                        with open(report_file, "w", encoding="utf-8") as f:
-                            f.write(f"# 📊 Báo Cáo Thị Trường Ngày {daily_insight.date}\n\n")
-                            f.write(f"### 🌡️ Tâm Lý Thị Trường: {daily_insight.market_sentiment_overlay}\n\n")
-                            f.write("## 🔥 Hot Topics\n")
-                            for topic in daily_insight.hot_topics:
-                                f.write(f"- {topic}\n")
-                            f.write("\n## 👁️ Hidden Insights\n")
-                            for insight in daily_insight.hidden_insights:
-                                f.write(f"- {insight}\n")
-                            f.write("\n## 🧭 Phân Tích Điều Hướng Truyền Thông\n")
-                            f.write(f"{daily_insight.media_steering_analysis}\n")
-                        print(f"📄 Đã xuất báo cáo Markdown: {report_file}")
+                        # # Generate Markdown Report
+                        # report_file = f"daily_report_{daily_insight.date}.md"
+                        # with open(report_file, "w", encoding="utf-8") as f:
+                        #     f.write(f"# 📊 Báo Cáo Thị Trường Ngày {daily_insight.date}\n\n")
+                        #     f.write(f"### 🌡️ Tâm Lý Thị Trường: {daily_insight.market_sentiment_overlay}\n\n")
+                        #     f.write("## 🔥 Hot Topics\n")
+                        #     for topic in daily_insight.hot_topics:
+                        #         f.write(f"- {topic}\n")
+                        #     f.write("\n## 👁️ Hidden Insights\n")
+                        #     for insight in daily_insight.hidden_insights:
+                        #         f.write(f"- {insight}\n")
+                        #     f.write("\n## 🧭 Phân Tích Điều Hướng Truyền Thông\n")
+                        #     f.write(f"{daily_insight.media_steering_analysis}\n")
+                        # print(f"📄 Đã xuất báo cáo Markdown: {report_file}")
                         
                     except Exception as e:
                         print(f"❌ DB Error saving insight: {e}")

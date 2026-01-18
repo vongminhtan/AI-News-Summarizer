@@ -4,6 +4,7 @@ import concurrent.futures
 from newspaper import Article, Config
 from database_manager import get_db
 import config
+import random
 
 # Timeout handler
 def handler(signum, frame):
@@ -12,24 +13,35 @@ def handler(signum, frame):
 # Register signal
 signal.signal(signal.SIGALRM, handler)
 
+import requests
+
 def scrape_single_url(url):
     """
     Hàm cào dữ liệu cho 1 URL (Chạy trong Thread).
-    Không kết nối DB ở đây để tránh lỗi Tunnel.
+    Sử dụng requests với headers để tránh bị chặn 403.
     """
     try:
-        # Newspaper Config
-        news_config = Config()
-        news_config.browser_user_agent = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-        news_config.request_timeout = 10
+        headers = {
+            'User-Agent': config.USER_AGENT,
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+            'Accept-Language': 'vi,en;q=0.9,en-US;q=0.8',
+            'Referer': 'https://www.google.com/',
+            'Cache-Control': 'max-age=0',
+        }
         
-        article = Article(url, config=news_config)
-        article.download()
+        # 1. Tải HTML bằng requests (tốt hơn newspaper.download trong việc giả lập browser)
+        response = requests.get(url, headers=headers, timeout=config.SCRAPE_TIMEOUT)
+        response.raise_for_status()
+        html = response.text
+        
+        # 2. Dùng newspaper để parse HTML
+        article = Article(url)
+        article.set_html(html)
         article.parse()
         
         content = article.text
-        if not content or len(content) < 100:
-            return (url, None, "Content too short")
+        if not content or len(content) < config.MIN_ARTICLE_LENGTH:
+            return (url, None, f"Content too short ({len(content) if content else 0} chars)")
             
         return (url, content, None)
         
@@ -44,6 +56,15 @@ def scrape_articles():
             # 1. Get articles that passed the filter
             cur.execute("SELECT url FROM articles WHERE status = 'filtered_in'")
             rows = cur.fetchall()
+            
+            # GIỚI HẠN TRONG TEST MODE
+            if config.TEST_MODE:
+                if config.TEST_RANDOM:
+                    print(f"🛠️ [TEST MODE] Lấy ngẫu nhiên {config.TEST_LIMIT} bài để cào nội dung.")
+                    random.shuffle(rows)
+                else:
+                    print(f"🛠️ [TEST MODE] Lấy {config.TEST_LIMIT} bài mới nhất để cào nội dung.")
+                rows = rows[:config.TEST_LIMIT]
             
             if not rows:
                 print("⚠️ Không có bài báo nào cần cào (status='filtered_in').")

@@ -1,8 +1,11 @@
 from pydantic import BaseModel, Field
 from typing import List, Optional
-from datetime import datetime, date
+from datetime import datetime, date, timezone
 from enum import Enum
 import config
+
+def get_now_utc():
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 class SentimentEnum(str, Enum):
     POSITIVE = "Tích cực"
@@ -29,7 +32,7 @@ class ArticleAnalysis(BaseModel):
     language: str = Field(default="vi", description="Ngôn ngữ của bài báo (vi/en)")
     importance_score: int = Field(default=5, ge=1, le=10, description="Độ quan trọng (1-10)")
     origin: str = Field(default="VN", description="Nguồn gốc (VN/Global)")
-    analyzed_at: datetime = Field(default_factory=datetime.now)
+    analyzed_at: datetime = Field(default_factory=get_now_utc)
     model_version: str = Field(default=config.GEMINI_MODEL, description="Model AI sử dụng để phân tích")
 
 class DailyInsight(BaseModel):
@@ -39,4 +42,4 @@ class DailyInsight(BaseModel):
     media_steering_analysis: Optional[str] = None
     hot_topics: List[str] = Field(default_factory=list)
     market_sentiment_overlay: Optional[str] = None
-    created_at: datetime = Field(default_factory=datetime.now)
+    created_at: datetime = Field(default_factory=get_now_utc)
