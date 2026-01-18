@@ -6,9 +6,10 @@ from dotenv import load_dotenv
 import config
 
 # Load environment variables
-load_dotenv() # Load root .env if exists
-load_dotenv("infrastructure/postgres/.env")
-load_dotenv("infrastructure/ssh/.env")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+load_dotenv(os.path.join(BASE_DIR, ".env")) # Load root .env if exists
+load_dotenv(os.path.join(BASE_DIR, "infrastructure/postgres/.env"))
+load_dotenv(os.path.join(BASE_DIR, "infrastructure/ssh/.env"))
 
 class DatabaseManager:
     def __init__(self):

@@ -4,10 +4,11 @@ import os
 TEST_MODE = False  # Chuyển thành False khi chạy thật
 TEST_LIMIT = 50    # Số lượng bài tối đa lấy từ mỗi nguồn khi ở chế độ TEST
 TEST_RANDOM = False # Nếu True, trong mode TEST sẽ chọn bài ngẫu nhiên thay vì bài mới nhất
-USE_SSH_TUNNEL = True # TRUE khi chạy ở Local Mac, FALSE khi chạy ở VPS
+USE_SSH_TUNNEL = False # TRUE khi chạy ở Local Mac, FALSE khi chạy ở VPS
 
 # --- Cấu hình chung ---
-DATA_DIR = "data"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(BASE_DIR, "data")
 if not os.path.exists(DATA_DIR):
     os.makedirs(DATA_DIR)
 

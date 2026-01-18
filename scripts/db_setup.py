@@ -9,7 +9,10 @@ from database_manager import get_db
 def setup_database():
     print("🛠️ Đang khởi tạo Database Schema...")
     
-    schema_path = "schema.sql"
+    # Sử dụng đường dẫn tuyệt đối tới file schema.sql
+    base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    schema_path = os.path.join(base_dir, "schema.sql")
+    
     if not os.path.exists(schema_path):
         print(f"❌ Không tìm thấy file {schema_path}")
         return
