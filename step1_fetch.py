@@ -1,8 +1,31 @@
 import feedparser
 import time
+import re
 from datetime import datetime
 import config
 from database_manager import get_db
+
+def extract_image(entry):
+    """Trích xuất link ảnh từ entry của RSS"""
+    # 1. Thử lấy từ media_thumbnail (phổ biến ở một số RSS)
+    if 'media_thumbnail' in entry and len(entry.media_thumbnail) > 0:
+        return entry.media_thumbnail[0].get('url')
+    
+    # 2. Thử lấy từ enclosures
+    if 'enclosures' in entry:
+        for enc in entry.enclosures:
+            if enc.get('type', '').startswith('image/'):
+                return enc.get('url')
+    
+    # 3. Phổ biến nhất ở VNExpress/Cafef: Link ảnh nằm trong description
+    description = entry.get('description', '')
+    if description:
+        # Tìm tag <img src="...">
+        img_match = re.search(r'<img[^>]+src=["\']([^"\']+)["\']', description)
+        if img_match:
+            return img_match.group(1)
+            
+    return None
 
 def fetch_rss():
     print(f"--- Đang quét {len(config.RSS_URLS)} nguồn RSS ---")
@@ -29,18 +52,20 @@ def fetch_rss():
                         published_parsed = entry.get('published_parsed')
                         published_date = datetime.fromtimestamp(time.mktime(published_parsed)) if published_parsed else datetime.now()
                         source = rss_url
+                        image_url = extract_image(entry)
 
                         if not link: continue
 
                         # Upsert vào DB
-                        # Nếu đã tồn tại nhưng status='fetched' thì cập nhật (VD: cập nhật title)
-                        # Nếu status khác 'fetched' (đang xử lý) thì bỏ qua
                         cur.execute("""
-                            INSERT INTO articles (url, title, source, published_date, status, created_at)
-                            VALUES (%s, %s, %s, %s, 'fetched', NOW())
-                            ON CONFLICT (url) DO NOTHING
+                            INSERT INTO articles (url, title, source, published_date, image_url, status, created_at)
+                            VALUES (%s, %s, %s, %s, %s, 'fetched', NOW())
+                            ON CONFLICT (url) DO UPDATE SET
+                                title = EXCLUDED.title,
+                                image_url = COALESCE(articles.image_url, EXCLUDED.image_url),
+                                published_date = COALESCE(articles.published_date, EXCLUDED.published_date)
                             RETURNING url;
-                        """, (link, title, source, published_date))
+                        """, (link, title, source, published_date, image_url))
                         
                         if cur.fetchone():
                             new_articles_count += 1

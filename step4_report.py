@@ -26,6 +26,9 @@ def analyze_single_article(article_row):
     Yêu cầu Output JSON đúng định dạng sau (không markdown):
     {{
         "summary": "Tóm tắt 3 câu, tập trung vào số liệu và sự kiện",
+        "language": "vi hoặc en",
+        "importance_score": 1-10,
+        "origin": "VN hoặc Global",
         "tags": {{
             "source": "Nguồn báo",
             "sectors": ["Bất động sản", "Ngân hàng", ...],
@@ -50,6 +53,9 @@ def analyze_single_article(article_row):
             url=url,
             title=title,
             summary=data.get("summary", ""),
+            language=data.get("language", "vi"),
+            importance_score=data.get("importance_score", 5),
+            origin=data.get("origin", "VN"),
             tags=ArticleTags(**data.get("tags", {})),
             author_intent=data.get("author_intent"),
             impact_analysis=data.get("impact_analysis"),
@@ -134,6 +140,7 @@ def generate_report():
                             UPDATE articles
                             SET summary = %s, tags = %s::jsonb, author_intent = %s, 
                                 impact_analysis = %s, analyzed_at = %s, model_version = %s, 
+                                language = %s, importance_score = %s, origin = %s, 
                                 status = 'analyzed'
                             WHERE url = %s
                         """, (
@@ -143,6 +150,9 @@ def generate_report():
                             res.impact_analysis,
                             res.analyzed_at,
                             res.model_version,
+                            res.language,
+                            res.importance_score,
+                            res.origin,
                             res.url
                         ))
                         count_success += 1

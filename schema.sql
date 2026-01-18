@@ -8,6 +8,10 @@ CREATE TABLE IF NOT EXISTS articles (
     title TEXT NOT NULL,
     source TEXT,
     published_date TIMESTAMP,
+    image_url TEXT,
+    language VARCHAR(10) DEFAULT 'vi',
+    importance_score INT DEFAULT 5,
+    origin VARCHAR(10) DEFAULT 'VN',
     
     -- Status Definitions:
     -- 'fetched': Vừa lấy về từ RSS

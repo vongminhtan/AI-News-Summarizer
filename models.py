@@ -26,6 +26,9 @@ class ArticleAnalysis(BaseModel):
     tags: ArticleTags
     author_intent: Optional[str] = Field(default=None, description="Mục đích của tác giả")
     impact_analysis: Optional[str] = Field(default=None, description="Tác động dự kiến")
+    language: str = Field(default="vi", description="Ngôn ngữ của bài báo (vi/en)")
+    importance_score: int = Field(default=5, ge=1, le=10, description="Độ quan trọng (1-10)")
+    origin: str = Field(default="VN", description="Nguồn gốc (VN/Global)")
     analyzed_at: datetime = Field(default_factory=datetime.now)
     model_version: str = Field(default=config.GEMINI_MODEL, description="Model AI sử dụng để phân tích")
 
