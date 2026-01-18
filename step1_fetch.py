@@ -1,79 +1,59 @@
 import feedparser
-import json
-import os
+import time
+from datetime import datetime
 import config
-
-def load_master_data():
-    """Load toàn bộ dữ liệu từ Master Database."""
-    if os.path.exists(config.STEP1_FILE):
-        with open(config.STEP1_FILE, "r", encoding="utf-8") as f:
-            try:
-                return json.load(f)
-            except:
-                return []
-    return []
-
-def save_data(file_path, data):
-    """Ghi dữ liệu ra file json."""
-    with open(file_path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+from database_manager import get_db
 
 def fetch_rss():
-    master_data = load_master_data()
-    existing_links = {item['link'] for item in master_data}
-    
-    all_batch_items = []    # Tất cả tin lấy được trong lần này
-    new_only_items = []     # Chỉ các tin mới hoàn toàn
-    
     print(f"--- Đang quét {len(config.RSS_URLS)} nguồn RSS ---")
     if config.TEST_MODE:
         print(f"Chế độ TEST: Giới hạn {config.TEST_LIMIT} bài mỗi nguồn.")
 
-    for url in config.RSS_URLS:
-        feed = feedparser.parse(url)
-        count_per_source = 0
-        
-        for entry in feed.entries:
-            if config.TEST_MODE and count_per_source >= config.TEST_LIMIT:
-                break
-                
-            item = {
-                "title": entry.title,
-                "link": entry.link,
-                "published": entry.get("published", "N/A")
-            }
-            
-            all_batch_items.append(item)
-            
-            # Kiểm tra xem có phải tin mới không
-            if item['link'] not in existing_links:
-                new_only_items.append(item)
-                master_data.append(item)
-                existing_links.add(item['link'])
-            
-            count_per_source += 1
-            
-        print(f"[{url}] Lấy được {count_per_source} bài.")
-
-    # 1. Cập nhật Master Database (Chỉ thêm mới)
-    if new_only_items:
-        save_data(config.STEP1_FILE, master_data)
-        print(f"✅ Đã cập nhật Master Database: +{len(new_only_items)} bài (Tổng: {len(master_data)})")
-    else:
-        print("ℹ️ Không có bài báo nào mới so với Master Database.")
-
-    # 2. Lưu Batch File (Tất cả tin vừa lấy - ghi đè)
-    save_data(config.BATCH_FILE, all_batch_items)
+    new_articles_count = 0
+    total_articles = 0
     
-    # 3. Lưu New Only File (Chỉ các tin mới - ghi đè)
-    save_data(config.NEW_ONLY_FILE, new_only_items)
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            for rss_url in config.RSS_URLS:
+                feed = feedparser.parse(rss_url)
+                print(f"[{rss_url}] Lấy được {len(feed.entries)} bài.")
+                
+                entries = feed.entries[:config.TEST_LIMIT] if config.TEST_MODE else feed.entries
+                
+                for entry in entries:
+                    total_articles += 1
+                    try:
+                        # Chuẩn hóa dữ liệu
+                        title = entry.get('title', 'No Title')
+                        link = entry.get('link', '')
+                        published_parsed = entry.get('published_parsed')
+                        published_date = datetime.fromtimestamp(time.mktime(published_parsed)) if published_parsed else datetime.now()
+                        source = rss_url
 
-    return all_batch_items, new_only_items
+                        if not link: continue
 
-# Test Block
+                        # Upsert vào DB
+                        # Nếu đã tồn tại nhưng status='fetched' thì cập nhật (VD: cập nhật title)
+                        # Nếu status khác 'fetched' (đang xử lý) thì bỏ qua
+                        cur.execute("""
+                            INSERT INTO articles (url, title, source, published_date, status, created_at)
+                            VALUES (%s, %s, %s, %s, 'fetched', NOW())
+                            ON CONFLICT (url) DO NOTHING
+                            RETURNING url;
+                        """, (link, title, source, published_date))
+                        
+                        if cur.fetchone():
+                            new_articles_count += 1
+                            
+                    except Exception as e:
+                        print(f"⚠️ Lỗi xử lý bài: {e}")
+                        continue
+            
+            conn.commit()
+
+    print(f"✅ Đã cập nhật database: +{new_articles_count} bài mới (Tổng quét: {total_articles})")
+    
+    return total_articles, new_articles_count
+
 if __name__ == "__main__":
-    batch, new = fetch_rss()
-    print(f"\n✅ Node 1 Hoàn tất!")
-    print(f"- Batch file (tất cả): {len(batch)} bài -> {config.BATCH_FILE}")
-    print(f"- New file (chỉ tin mới): {len(new)} bài -> {config.NEW_ONLY_FILE}")
-    print(f"- Master database (tổng hợp): {config.STEP1_FILE}")
+    fetch_rss()

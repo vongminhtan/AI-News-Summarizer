@@ -11,13 +11,13 @@ class SentimentEnum(str, Enum):
     UNKNOWN = "Không xác định"
 
 class ArticleTags(BaseModel):
-    source: str = Field(default="Không xác định", description="Tên báo hoặc nguồn tin")
+    source: Optional[str] = Field(default="Không xác định", description="Tên báo hoặc nguồn tin")
     sectors: List[str] = Field(default_factory=list, description="Ngành nghề liên quan")
     entities: List[str] = Field(default_factory=list, description="Tên công ty, tổ chức")
     people: List[str] = Field(default_factory=list, description="Tên các nhân vật xuất hiện")
     locations: List[str] = Field(default_factory=list, description="Địa danh")
     keywords: List[str] = Field(default_factory=list, description="Từ khóa quan trọng")
-    sentiment: SentimentEnum = Field(default=SentimentEnum.UNKNOWN, description="Cảm xúc của bài báo")
+    sentiment: Optional[SentimentEnum] = Field(default=SentimentEnum.UNKNOWN, description="Cảm xúc của bài báo")
 
 class ArticleAnalysis(BaseModel):
     url: str

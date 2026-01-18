@@ -1,109 +1,111 @@
 import json
-import os
 import config
 import random
 from gemini_helper import call_gemini_cli
+from database_manager import get_db
 
-def filter_news(input_file):
-    # --- LOGIC CHO CHẾ ĐỘ TEST ---
-    if config.TEST_MODE:
-        mode_desc = "ngẫu nhiên" if config.TEST_RANDOM else "mới nhất"
-        print(f"🛠️ [TEST MODE] Bỏ qua AI, lấy luôn 3 bài {mode_desc} từ Master Database.")
-        
-        if os.path.exists(config.STEP1_FILE):
-            with open(config.STEP1_FILE, "r", encoding="utf-8") as f:
-                try:
-                    master_data = json.load(f)
-                    if not master_data:
-                        return []
-                    
-                    if config.TEST_RANDOM:
-                        # Lấy 3 bài ngẫu nhiên
-                        count = min(3, len(master_data))
-                        selected_items = random.sample(master_data, count)
-                    else:
-                        # Lấy 3 bài cuối cùng
-                        selected_items = master_data[-3:] if len(master_data) >= 3 else master_data
-                        
-                    return [item['link'] for item in selected_items]
-                except:
-                    pass
-        print("⚠️ Master Database trống, không có bài để lấy.")
-        return []
-
-    # 1. Đọc dữ liệu từ Node 1 (data_new.json)
-    if not os.path.exists(input_file):
-        print(f"❌ Không tìm thấy file {input_file}")
-        return []
-
-    with open(input_file, "r", encoding="utf-8") as f:
-        raw_news = json.load(f)
+def filter_news():
+    print(f"\n--- [Step 2] Filtering News (Threshold: {config.IMPORTANCE_THRESHOLD}) ---")
     
-    if not raw_news:
-        print("⚠️ Không có tin mới để lọc.")
-        return []
-
-    # 2. Skip filter nếu số lượng quá ít (tự động giữ lại bài khi không có gì để lọc)
-    if len(raw_news) <= 2:
-        print(f"ℹ️ Chỉ có {len(raw_news)} tin mới, giữ lại toàn bộ bài.")
-        return [item['link'] for item in raw_news]
-
-    # 3. Chuẩn bị danh sách cho AI
-    simplified_list = []
-    for index, item in enumerate(raw_news):
-        simplified_list.append(f"ID: {index} | Title: {item['title']}")
-    
-    prompt_text = "\n".join(simplified_list)
-
-    query = f"""
-    Bạn là một chuyên gia phân tích tài chính. 
-    Nhiệm vụ: Đọc danh sách tiêu đề bên dưới và đánh giá tầm ảnh hưởng của chúng đến thị trường tài chính (Việt Nam hoặc Thế giới).
-
-    Yêu cầu Output: 
-    - Trả về 1 JSON Array chứa các ID (số nguyên) của những bài báo thỏa mãn:
-        1. Điểm đánh giá mức độ quan trọng (Impact Score) >= {config.IMPORTANCE_THRESHOLD}/10. 
-        2. Các tiêu chí quan trọng: Ảnh hưởng giá tài sản, chính sách vĩ mô, hoặc báo cáo tài chính lớn.
-    - Không giới hạn số lượng bài chọn, miễn là đạt trên {config.IMPORTANCE_THRESHOLD} điểm.
-    - Định dạng: [1, 5, 8] (Chỉ trả về JSON, không giải thích).
-
-    Danh sách:
-    {prompt_text}
-    """
-
-    print(f"--- Đang lọc tin (Threshold: {config.IMPORTANCE_THRESHOLD}) ---")
-    response_text = call_gemini_cli(query, model=config.FILTER_MODEL)
-    
-    if not response_text:
-        return []
-
-    # 4. Parse kết quả
-    try:
-        cleaned_text = response_text.replace("```json", "").replace("```", "").strip()
-        selected_ids = json.loads(cleaned_text)
-        
-        final_links = []
-        print(f"\nGemini đã chọn ({len(selected_ids)} bài):")
-        for i in selected_ids:
-            try:
-                item = raw_news[int(i)]
-                print(f"- [Score >= {config.IMPORTANCE_THRESHOLD}] {item['title']}")
-                final_links.append(item['link'])
-            except (IndexError, ValueError):
-                continue
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            # 1. Lấy danh sách bài có status = 'fetched'
+            cur.execute("SELECT url, title FROM articles WHERE status = 'fetched'")
+            raw_news = cur.fetchall() # [(url, title), ...]
             
-        return final_links
+            if not raw_news:
+                print("⚠️ Không có bài báo nào cần lọc (status='fetched').")
+                return []
 
-    except Exception as e:
-        print(f"❌ Lỗi khi parse JSON từ AI: {e}")
-        return []
+            # TEST MODE Logic
+            if config.TEST_MODE:
+                mode_desc = "ngẫu nhiên" if config.TEST_RANDOM else "mới nhất"
+                print(f"🛠️ [TEST MODE] Giới hạn 3 bài {mode_desc} để test.")
+                
+                if config.TEST_RANDOM:
+                    selected_indices = random.sample(range(len(raw_news)), min(3, len(raw_news)))
+                else:
+                    selected_indices = list(range(min(3, len(raw_news))))
+                
+                selected_urls = []
+                for idx, (url, title) in enumerate(raw_news):
+                    if idx in selected_indices:
+                        cur.execute("""
+                            UPDATE articles 
+                            SET status = 'filtered_in', filter_score = 10, filter_reason = 'Selected in TEST MODE' 
+                            WHERE url = %s
+                        """, (url,))
+                        selected_urls.append(url)
+                    else:
+                        # Mark others as filtered_out even in test mode to clean up
+                        cur.execute("""
+                            UPDATE articles 
+                            SET status = 'filtered_out', filter_score = 0, filter_reason = 'Not selected in TEST MODE' 
+                            WHERE url = %s
+                        """, (url,))
+                
+                conn.commit()
+                return selected_urls
 
-# Test Block
+            # 2. Prepare AI Prompt
+            articles_map = {i: (url, title) for i, (url, title) in enumerate(raw_news)}
+            prompt_list = [f"ID: {i} | Title: {title}" for i, (url, title) in articles_map.items()]
+            prompt_text = "\n".join(prompt_list)
+
+            query = f"""
+            Bạn là một chuyên gia phân tích tài chính. Hãy đánh giá tầm quan trọng của các tin tức sau.
+            
+            Yêu cầu Output JSON Array duy nhất, mỗi phần tử chứa:
+            - id: ID của bài báo (số nguyên)
+            - score: Điểm quan trọng (0-10)
+            - reason: Lý do ngắn gọn (1 câu tiếng Việt)
+
+            Ví dụ: [{"id": 0, "score": 8, "reason": "Ảnh hưởng tỷ giá"}, {"id": 1, "score": 2, "reason": "Tin PR"}]
+
+            Danh sách:
+            {prompt_text}
+            """
+
+            response_text = call_gemini_cli(query, model=config.FILTER_MODEL)
+            if not response_text:
+                return []
+
+            try:
+                cleaned_text = response_text.replace("```json", "").replace("```", "").strip()
+                ai_results = json.loads(cleaned_text) # List of dicts
+                
+                selected_urls = []
+                print(f"\nKết quả đánh giá từ AI:")
+                
+                for res in ai_results:
+                    idx = res.get('id')
+                    score = res.get('score', 0)
+                    reason = res.get('reason', '')
+                    
+                    if idx in articles_map:
+                        url, title = articles_map[idx]
+                        
+                        if score >= config.IMPORTANCE_THRESHOLD:
+                            status = 'filtered_in'
+                            selected_urls.append(url)
+                            print(f"✅ [{score}] {title} -> {reason}")
+                        else:
+                            status = 'filtered_out'
+                            print(f"❌ [{score}] {title} -> {reason}")
+                        
+                        # Cập nhật DB cho từng bài
+                        cur.execute("""
+                            UPDATE articles 
+                            SET status = %s, filter_score = %s, filter_reason = %s 
+                            WHERE url = %s
+                        """, (status, score, reason, url))
+                
+                conn.commit()
+                return selected_urls
+
+            except Exception as e:
+                print(f"❌ Lỗi khi xử lý kết quả AI: {e}")
+                return []
+
 if __name__ == "__main__":
-    # Test với file data_new.json
-    selected_links = filter_news(config.NEW_ONLY_FILE)
-    if selected_links:
-        with open(config.STEP2_FILE, "w", encoding="utf-8") as f:
-            json.dump(selected_links, f, ensure_ascii=False, indent=2)
-        print(f"\n✅ Node 2 Hoàn tất! Lưu tại {config.STEP2_FILE}")
-    else:
-        print("\n❌ Node 2 không chọn bài nào hoặc gặp lỗi.")
+    filter_news()

@@ -1,196 +1,204 @@
-import json
-import os
-import datetime
 import concurrent.futures
+import json
+from datetime import datetime, date
 import config
 from gemini_helper import call_gemini_cli
 from models import ArticleAnalysis, ArticleTags, DailyInsight
+from database_manager import get_db
 
-def load_db(file_path):
-    if os.path.exists(file_path):
-        with open(file_path, "r", encoding="utf-8") as f:
-            try:
-                return json.load(f)
-            except:
-                return {}
-    return {}
-
-def save_db(file_path, data):
-    with open(file_path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-
-def analyze_single_article(article):
-    url = article['url']
-    title = article['title']
-    content = article['text']
+def analyze_single_article(article_row):
+    """
+    Phân tích 1 bài báo.
+    Input: article_row (tuple): (url, title, content, published_date)
+    Output: ArticleAnalysis object
+    """
+    url, title, content, published_date = article_row
     
-    analysis_db = load_db(config.ANALYSIS_DB_FILE)
-    if url in analysis_db:
-        print(f"⏩ Đã có phân tích cho bài: {title}. Skip.")
-        return analysis_db[url]
-
-    print(f"🧠 Đang phân tích chuyên sâu: {title}")
+    # Cắt ngắn nội dung nếu quá dài
+    content_snippet = content[:config.MAX_CHARS_PER_ARTICLE]
     
     prompt = f"""
-    Bạn là một chuyên gia phân tích dữ liệu và truyền thông tài chính.
-    Hãy phân tích bài báo sau đây và trả về kết quả dưới dạng JSON duy nhất, tuân thủ đúng định dạng yêu cầu.
-
-    Nội dung bài báo:
-    Tiêu đề: {title}
-    Nội dung: {content[:config.MAX_CHARS_PER_ARTICLE]}
-
-    Yêu cầu JSON Output:
+    Phân tích bài báo tài chính sau và trích xuất thông tin dưới dạng JSON.
+    
+    Bài báo: {title}
+    Nội dung: {content_snippet}
+    
+    Yêu cầu Output JSON đúng định dạng sau (không markdown):
     {{
-        "url": "{url}",
-        "title": "{title}",
-        "summary": "Tóm tắt ngắn gọn 1-2 câu",
+        "summary": "Tóm tắt 3 câu, tập trung vào số liệu và sự kiện",
         "tags": {{
-            "source": "Tên báo/nguồn tin",
-            "sectors": ["Ngành nghề"],
-            "entities": ["Tên công ty"],
-            "people": ["Tên người"],
-            "locations": ["Địa danh"],
-            "keywords": ["Từ khóa"],
-            "sentiment": "Tích cực | Tiêu cực | Trung lập | Không xác định"
+            "source": "Nguồn báo",
+            "sectors": ["Bất động sản", "Ngân hàng", ...],
+            "entities": ["Vingroup", "Techcombank", ...],
+            "people": ["Phạm Nhật Vượng", ...],
+            "locations": ["TP.HCM", "Hà Nội"],
+            "keywords": ["FED", "Lãi suất", ...],
+            "sentiment": "Tích cực/Tiêu cực/Trung lập"
         }},
-        "author_intent": "Mục đích bài viết",
-        "impact_analysis": "Phân tích tác động"
+        "author_intent": "Mục đích bài viết (PR, Tin tức, Cảnh báo, ...)",
+        "impact_analysis": "Dự đoán tác động ngắn hạn (Tăng/Giảm/Ổn định) đến thị trường liên quan."
     }}
     """
-
-    response_text = call_gemini_cli(prompt, model=config.GEMINI_MODEL)
-    if not response_text:
-        return None
-
+    
     try:
-        cleaned_text = response_text.replace("```json", "").replace("```", "").strip()
-        raw_json = json.loads(cleaned_text)
+        response = call_gemini_cli(prompt, model=config.GEMINI_MODEL)
+        cleaned = response.replace("```json", "").replace("```", "").strip()
+        data = json.loads(cleaned)
         
-        # Validate bằng Pydantic
-        # Lưu ý: AI có thể không trả về url/title trong json, ta cần inject vào
-        raw_json["url"] = url
-        raw_json["title"] = title
+        # Validate & Map to Pydantic Model
+        analysis = ArticleAnalysis(
+            url=url,
+            title=title,
+            summary=data.get("summary", ""),
+            tags=ArticleTags(**data.get("tags", {})),
+            author_intent=data.get("author_intent"),
+            impact_analysis=data.get("impact_analysis"),
+            analyzed_at=datetime.now(),
+            model_version=config.GEMINI_MODEL
+        )
+        return analysis
         
-        analysis_model = ArticleAnalysis(**raw_json)
-        
-        # Serialize thành dict để lưu JSON
-        analysis_dict = json.loads(analysis_model.model_dump_json())
-        
-        # Lưu vào DB (lưu ý concurrent write)
-        analysis_db = load_db(config.ANALYSIS_DB_FILE)
-        analysis_db[url] = analysis_dict
-        save_db(config.ANALYSIS_DB_FILE, analysis_db)
-        
-        return analysis_dict
     except Exception as e:
-        print(f"❌ Lỗi validation/parse bài '{title}': {e}")
+        print(f"❌ Error analyzing {url}: {e}")
         return None
 
-def process_articles_parallel(articles):
-    print(f"\n--- Bắt đầu phân tích song song {len(articles)} bài báo ---")
-    results = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
-        future_to_article = {executor.submit(analyze_single_article, art): art for art in articles}
-        for future in concurrent.futures.as_completed(future_to_article):
-            res = future.result()
-            if res:
-                results.append(res)
-    return results
+def generate_daily_insights(analyzed_articles):
+    """
+    Tổng hợp insight từ danh sách các bài báo đã phân tích trong ngày.
+    """
+    if not analyzed_articles:
+        return None
 
-def generate_daily_insight():
-    print(f"📊 Đang tổng hợp Insight 24h qua...")
-    
-    analysis_db = load_db(config.ANALYSIS_DB_FILE)
-    now = datetime.datetime.now()
-    yesterday = now - datetime.timedelta(hours=24)
-    
-    recent_analyses = []
-    for url, data in analysis_db.items():
-        try:
-            analyzed_at = datetime.datetime.fromisoformat(data['analyzed_at'])
-            if analyzed_at > yesterday:
-                recent_analyses.append(data)
-        except:
-            continue
-            
-    if not recent_analyses:
-        print("⚠️ Không có dữ liệu phân tích trong 24h qua để tạo insight.")
-        return
-
-    context = ""
-    for idx, data in enumerate(recent_analyses, 1):
-        # Data đã được normalized, truy xuất an toàn
-        tags = data.get('tags', {})
-        context += f"Bài {idx}: {data['title']}. Tóm tắt: {data['summary']}. Tags: {tags}\n"
+    # Gom nội dung để gửi cho AI tổng hợp
+    articles_text = ""
+    for idx, art in enumerate(analyzed_articles):
+        articles_text += f"[{idx+1}] {art.title} (Sentiment: {art.tags.sentiment})\n"
+        articles_text += f"   Summary: {art.summary}\n"
+        articles_text += f"   Impact: {art.impact_analysis}\n\n"
 
     prompt = f"""
-    Dựa trên các phân tích bài báo trong 24h qua sau đây:
-    {context}
-
-    Hãy thực hiện phân tích tổng quát (Insight Report).
-    Trả về kết quả JSON với các trường:
+    Dựa trên {len(analyzed_articles)} bài báo tài chính sau đây, hãy tổng hợp thành Báo Cáo Chiến Lược Ngày.
+    
+    Danh sách bài báo:
+    {articles_text}
+    
+    Yêu cầu Output JSON (không markdown):
     {{
-        "date": "{now.strftime('%Y-%m-%d')}",
-        "main_trends": ["Chanel 1", "Chanel 2"],
-        "hidden_insights": ["Insight 1"],
-        "media_steering_analysis": "Text analysis...",
-        "hot_topics": ["Topic 1"],
-        "market_sentiment_overlay": "Text..."
+        "date": "{date.today()}",
+        "main_trends": ["Xu hướng chính 1", "Xu hướng chính 2"],
+        "hidden_insights": ["Insight không hiển nhiên mà bạn nhận ra từ dữ liệu trên"],
+        "media_steering_analysis": "Phân tích xem truyền thông đang muốn lái dư luận theo hướng nào (FUD, FOMO, hay Thận trọng).",
+        "hot_topics": ["Chủ đề 1", "Chủ đề 2"],
+        "market_sentiment_overlay": "Nhận định chung về tâm lý thị trường (Bullish/Bearish/Neutral) và lý do."
     }}
     """
-
-    response_text = call_gemini_cli(prompt, model=config.GEMINI_MODEL)
-    if not response_text:
-        return
-
-    try:
-        cleaned_text = response_text.replace("```json", "").replace("```", "").strip()
-        raw_json = json.loads(cleaned_text)
-        
-        # Validate bằng Pydantic
-        insight_model = DailyInsight(**raw_json)
-        
-        insight_dict = json.loads(insight_model.model_dump_json())
-        date_str = str(insight_model.date)
-        
-        insights_db = load_db(config.DAILY_INSIGHTS_FILE)
-        insights_db[date_str] = insight_dict
-        save_db(config.DAILY_INSIGHTS_FILE, insights_db)
-        
-        # Tạo report Markdown
-        report_md = f"# DAILY FINANCIAL INSIGHTS - {date_str}\n\n"
-        report_md += f"*(Created at: {insight_model.created_at.strftime('%H:%M %d/%m/%Y')})*\n\n"
-        report_md += "## 📈 Xu hướng chính\n" + "\n".join([f"- {i}" for i in insight_model.main_trends]) + "\n\n"
-        report_md += "## 💡 Hidden Insights\n" + "\n".join([f"- {i}" for i in insight_model.hidden_insights]) + "\n\n"
-        report_md += "## 🗣️ Media Steering Analysis\n" + (insight_model.media_steering_analysis or "N/A") + "\n\n"
-        report_md += "## 🔥 Hot Topics\n" + ", ".join(insight_model.hot_topics) + "\n"
-        
-        report_filename = f"daily_report_{date_str}.md"
-        with open(report_filename, "w", encoding="utf-8") as f:
-            f.write(report_md)
-            
-        print(f"✅ Đã tạo báo cáo Insight: {report_filename}")
-        return insight_dict
-    except Exception as e:
-        print(f"❌ Lỗi parse Daily Insight: {e}")
-
-def generate_report(input_file):
-    # Đọc dữ liệu từ Node 3 (Content đã cào)
-    if not os.path.exists(input_file):
-        print(f"❌ Không tìm thấy file {input_file}")
-        return
-
-    with open(input_file, "r", encoding="utf-8") as f:
-        articles = json.load(f)
-
-    if not articles:
-        return
-
-    # Bước 1: Phân tích từng bài song song
-    process_articles_parallel(articles)
     
-    # Bước 2: Tổng hợp Insight 24h
-    generate_daily_insight()
+    try:
+        response = call_gemini_cli(prompt, model=config.GEMINI_MODEL)
+        cleaned = response.replace("```json", "").replace("```", "").strip()
+        data = json.loads(cleaned)
+        
+        return DailyInsight(**data)
+    except Exception as e:
+        print(f"❌ Error generating insights: {e}")
+        return None
+
+def generate_report():
+    print("\n--- [Step 4] Analyzing & Reporting ---")
+    
+    processed_analyses = []
+    
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            # 1. Get articles available for analysis
+            cur.execute("SELECT url, title, content, published_date FROM articles WHERE status = 'scraped'")
+            rows = cur.fetchall() # [(url, title, content, date), ...]
+            
+            if not rows:
+                print("⚠️ Không có bài báo nào cần phân tích (status='scraped').")
+                return
+
+            print(f"🔍 Bắt đầu phân tích {len(rows)} bài báo (Parallel)...")
+            
+            # 2. Analyze Parallel
+            with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+                results = list(executor.map(analyze_single_article, rows))
+            
+            # 3. Save Analysis Results to DB
+            count_success = 0
+            for res in results:
+                if res:
+                    processed_analyses.append(res)
+                    try:
+                        cur.execute("""
+                            UPDATE articles
+                            SET summary = %s, tags = %s::jsonb, author_intent = %s, 
+                                impact_analysis = %s, analyzed_at = %s, model_version = %s, 
+                                status = 'analyzed'
+                            WHERE url = %s
+                        """, (
+                            res.summary,
+                            res.tags.model_dump_json(), # Pydantic to JSON string
+                            res.author_intent,
+                            res.impact_analysis,
+                            res.analyzed_at,
+                            res.model_version,
+                            res.url
+                        ))
+                        count_success += 1
+                    except Exception as e:
+                        print(f"❌ DB Error saving analysis for {res.url}: {e}")
+            
+            conn.commit()
+            print(f"✅ Đã phân tích và lưu {count_success} bài.")
+
+            # 4. Generate Daily Insights (from ALL articles analyzed in last 24h)
+            
+            if processed_analyses:
+                print("🧠 Đang tổng hợp Insight thị trường...")
+                daily_insight = generate_daily_insights(processed_analyses)
+                
+                if daily_insight:
+                    # Save Insight to DB
+                    try:
+                        cur.execute("""
+                            INSERT INTO daily_insights (date, main_trends, hidden_insights, media_steering_analysis, hot_topics, market_sentiment_overlay, created_at)
+                            VALUES (%s, %s::jsonb, %s::jsonb, %s, %s::jsonb, %s, NOW())
+                            ON CONFLICT (date) DO UPDATE SET
+                                main_trends = EXCLUDED.main_trends,
+                                hidden_insights = EXCLUDED.hidden_insights,
+                                media_steering_analysis = EXCLUDED.media_steering_analysis,
+                                hot_topics = EXCLUDED.hot_topics,
+                                market_sentiment_overlay = EXCLUDED.market_sentiment_overlay,
+                                created_at = NOW();
+                        """, (
+                            daily_insight.date,
+                            json.dumps(daily_insight.main_trends, ensure_ascii=False),
+                            json.dumps(daily_insight.hidden_insights, ensure_ascii=False),
+                            daily_insight.media_steering_analysis,
+                            json.dumps(daily_insight.hot_topics, ensure_ascii=False),
+                            daily_insight.market_sentiment_overlay
+                        ))
+                        conn.commit()
+                        print("✅ Đã lưu Daily Insight vào Database.")
+                        
+                        # Generate Markdown Report
+                        report_file = f"daily_report_{daily_insight.date}.md"
+                        with open(report_file, "w", encoding="utf-8") as f:
+                            f.write(f"# 📊 Báo Cáo Thị Trường Ngày {daily_insight.date}\n\n")
+                            f.write(f"### 🌡️ Tâm Lý Thị Trường: {daily_insight.market_sentiment_overlay}\n\n")
+                            f.write("## 🔥 Hot Topics\n")
+                            for topic in daily_insight.hot_topics:
+                                f.write(f"- {topic}\n")
+                            f.write("\n## 👁️ Hidden Insights\n")
+                            for insight in daily_insight.hidden_insights:
+                                f.write(f"- {insight}\n")
+                            f.write("\n## 🧭 Phân Tích Điều Hướng Truyền Thông\n")
+                            f.write(f"{daily_insight.media_steering_analysis}\n")
+                        print(f"📄 Đã xuất báo cáo Markdown: {report_file}")
+                        
+                    except Exception as e:
+                        print(f"❌ DB Error saving insight: {e}")
 
 if __name__ == "__main__":
-    generate_report(config.STEP3_FILE)
+    generate_report()

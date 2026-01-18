@@ -41,7 +41,7 @@ class DatabaseManager:
                 ssh_password=self.ssh_pass,
                 ssh_proxy=proxy,
                 remote_bind_address=('localhost', 5432),
-                local_bind_address=('127.0.0.1', 6544) # Port local tạm thời
+                local_bind_address=('127.0.0.1', 0) # Use dynamic port
             )
             self.tunnel.start()
             
