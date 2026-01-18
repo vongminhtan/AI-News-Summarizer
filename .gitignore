@@ -37,6 +37,8 @@ report_*.md
 
 # Environment Variables
 .env
+infrastructure/ssh/.env
+infrastructure/postgres/.env
 
 # macOS
 .DS_Store

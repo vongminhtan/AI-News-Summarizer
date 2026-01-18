@@ -1,9 +1,10 @@
 import os
 
-# --- Chế độ TEST ---
+# --- Chế độ chạy ---
 TEST_MODE = True  # Chuyển thành False khi chạy thật
 TEST_LIMIT = 10    # Số lượng bài tối đa lấy từ mỗi nguồn khi ở chế độ TEST
 TEST_RANDOM = True # Nếu True, trong mode TEST sẽ chọn bài ngẫu nhiên thay vì bài mới nhất
+USE_SSH_TUNNEL = True # TRUE khi chạy ở Local Mac, FALSE khi chạy ở VPS
 
 # --- Cấu hình chung ---
 DATA_DIR = "data"
