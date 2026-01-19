@@ -14,9 +14,20 @@ def main():
     print("\n[1/4] Fetching RSS...")
     total, new_count = step1_fetch.fetch_rss()
     
-    if new_count == 0 and not config.TEST_MODE:
-        print("☕ Không có tin nào mới. Nghỉ ngơi thôi!")
+    # Kiểm tra xem có bài nào status 'fetched' đang chờ xử lý không
+    pending_count = 0
+    from database_manager import get_db
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM articles WHERE status = 'fetched' AND published_date >= (NOW() AT TIME ZONE 'UTC') - INTERVAL '24 hours'")
+            pending_count = cur.fetchone()[0]
+
+    if new_count == 0 and pending_count == 0 and not config.TEST_MODE:
+        print("☕ Không có tin nào mới và không có tin chờ xử lý. Nghỉ ngơi thôi!")
         return
+    
+    if pending_count > 0:
+        print(f"🔄 Tìm thấy {pending_count} tin đang chờ xử lý từ trước.")
 
     # BƯỚC 2: LỌC TIN (GEMINI) -> UPDATE STATUS 'filtered_in'
     print("\n[2/4] Filtering News...")

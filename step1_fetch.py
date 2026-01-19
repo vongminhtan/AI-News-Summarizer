@@ -40,6 +40,7 @@ def fetch_rss():
         print(f"Chế độ TEST: Giới hạn {config.TEST_LIMIT} bài mỗi nguồn.")
 
     new_articles_count = 0
+    updated_articles_count = 0
     total_articles = 0
     skipped_count = 0
     
@@ -76,17 +77,22 @@ def fetch_rss():
 
                         # Upsert vào DB
                         cur.execute("""
-                            INSERT INTO articles (url, title, source, published_date, image_url, status, created_at)
-                            VALUES (%s, %s, %s, %s, %s, 'fetched', NOW())
+                            INSERT INTO articles (url, title, source, published_date, image_url, status, created_at, updated_at)
+                            VALUES (%s, %s, %s, %s, %s, 'fetched', NOW(), NOW())
                             ON CONFLICT (url) DO UPDATE SET
                                 title = EXCLUDED.title,
                                 image_url = COALESCE(articles.image_url, EXCLUDED.image_url),
-                                published_date = COALESCE(articles.published_date, EXCLUDED.published_date)
-                            RETURNING url;
+                                published_date = COALESCE(articles.published_date, EXCLUDED.published_date),
+                                updated_at = NOW()
+                            RETURNING (xmax = 0) AS is_inserted;
                         """, (link, title, source, published_date, image_url))
                         
-                        if cur.fetchone():
-                            new_articles_count += 1
+                        result = cur.fetchone()
+                        if result:
+                            if result[0]: # is_inserted
+                                new_articles_count += 1
+                            else:
+                                updated_articles_count += 1
                             
                     except Exception as e:
                         print(f"⚠️ Lỗi xử lý bài: {e}")
@@ -94,7 +100,7 @@ def fetch_rss():
             
             conn.commit()
 
-    print(f"✅ Đã cập nhật database: +{new_articles_count} bài mới (Tổng quét: {total_articles}, Bỏ qua: {skipped_count} bài cũ)")
+    print(f"✅ Đã cập nhật database: +{new_articles_count} bài mới, {updated_articles_count} bài cũ được cập nhật (Tổng quét: {total_articles}, Bỏ qua: {skipped_count} bài quá 24h)")
     
     return total_articles, new_articles_count
 

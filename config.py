@@ -28,7 +28,8 @@ RSS_URLS = [
     "https://vnexpress.net/rss/kinh-doanh.rss",
     "https://rss.nytimes.com/services/xml/rss/nyt/Business.xml",
     "https://cafebiz.vn/rss/chung-khoan.rss",
-    "https://rss.nytimes.com/services/xml/rss/nyt/Economy.xml"
+    "https://rss.nytimes.com/services/xml/rss/nyt/Economy.xml",
+    "https://tuoitre.vn/rss/kinh-doanh.rss",
 ]
 
 # --- AI CLI Config ---
