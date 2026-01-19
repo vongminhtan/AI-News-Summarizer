@@ -3,6 +3,7 @@ import step2_filter
 import step3_scrape
 import step4_report
 import config
+import notifier
 
 def main():
     print("🚀 BẮT ĐẦU QUY TRÌNH TỔNG HỢP TIN SÁNG (DB-DRIVEN) 🚀")
@@ -33,7 +34,12 @@ def main():
 
     # BƯỚC 4: TỔNG HỢP BÁO CÁO -> UPDATE STATUS 'analyzed' & INSERT INSIGHTS
     print("\n[4/4] Writing Report...")
-    step4_report.generate_report()
+    daily_insight, analyzed_count = step4_report.generate_report()
+
+    if daily_insight:
+        print("\n🔔 Sending Telegram notification...")
+        msg = notifier.format_daily_insight_message(daily_insight, analyzed_count)
+        notifier.send_telegram_message(msg)
 
     print("\n🎉 HOÀN THÀNH NHIỆM VỤ!")
 

@@ -46,8 +46,8 @@ def call_gemini_cli(prompt, model="gemini-2.5-pro"):
     Calls the local 'gemini' CLI tool.
     """
     try:
-        # Đường dẫn tuyệt đối tới gemini CLI
-        gemini_path = "/home/rizao/.nvm/versions/node/v24.13.0/bin/gemini"
+        # Đường dẫn tới gemini CLI từ config
+        gemini_path = getattr(config, "GEMINI_CLI_PATH", "gemini")
         process = subprocess.Popen(
             [gemini_path, "--model", model, "--output-format", "json"],
             stdin=subprocess.PIPE,
@@ -81,8 +81,8 @@ def call_codex_cli(prompt, model="gpt-5.2"):
     Example: codex exec --model gpt-5.2 --skip-git-repo-check - <<'PROMPT'
     """
     try:
-        # Đường dẫn tuyệt đối tới codex CLI
-        codex_path = "/home/linuxbrew/.linuxbrew/bin/codex"
+        # Đường dẫn tới codex CLI từ config
+        codex_path = getattr(config, "CODEX_CLI_PATH", "codex")
         process = subprocess.Popen(
             [codex_path, "exec", "--model", model, "--skip-git-repo-check", "-"],
             stdin=subprocess.PIPE,

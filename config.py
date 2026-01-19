@@ -4,7 +4,7 @@ import os
 TEST_MODE = False  # Chuyển thành False khi chạy thật
 TEST_LIMIT = 50    # Số lượng bài tối đa lấy từ mỗi nguồn khi ở chế độ TEST
 TEST_RANDOM = False # Nếu True, trong mode TEST sẽ chọn bài ngẫu nhiên thay vì bài mới nhất
-USE_SSH_TUNNEL = False # TRUE khi chạy ở Local Mac, FALSE khi chạy ở VPS
+USE_SSH_TUNNEL = True # TRUE khi chạy ở Local Mac, FALSE khi chạy ở VPS
 
 # --- Cấu hình chung ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -42,6 +42,16 @@ FILTER_MODEL = "gemini-3-flash-preview"
 CODEX_MODEL = "gpt-5.2"
 IMPORTANCE_THRESHOLD = 7 # Điểm tối thiểu (1-10) để lấy bài báo
 
+# Paths to CLI tools (Differentiates between Local Mac and VPS)
+if USE_SSH_TUNNEL:
+    # Local Mac Paths
+    GEMINI_CLI_PATH = os.path.join(os.path.expanduser("~"), ".npm-global/bin/gemini")
+    CODEX_CLI_PATH = os.path.join(os.path.expanduser("~"), ".npm-global/bin/codex")
+else:
+    # VPS Paths
+    GEMINI_CLI_PATH = "/home/rizao/.nvm/versions/node/v24.13.0/bin/gemini"
+    CODEX_CLI_PATH = "/home/linuxbrew/.linuxbrew/bin/codex"
+
 # --- Scraping Config ---
 USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 SCRAPE_TIMEOUT = 15
@@ -52,3 +62,8 @@ MIN_ARTICLE_LENGTH = 100
 MAX_ARTICLES_PER_REPORT = 5
 MAX_CHARS_PER_ARTICLE = 5000
 REPORT_TITLE_PREFIX = "Báo Cáo Điểm Tin Tài Chính"
+
+# --- Telegram Config ---
+ENABLE_TELEGRAM = os.getenv("ENABLE_TELEGRAM", "True").lower() == "true"
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")

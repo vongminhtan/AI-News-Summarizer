@@ -137,7 +137,7 @@ def generate_report():
             
             if not rows:
                 print("⚠️ Không có bài báo nào cần phân tích (status='scraped').")
-                return
+                return None, 0
  
             total_articles = len(rows)
             print(f"🔍 Bắt đầu phân tích {total_articles} bài báo (6 Hybrid workers, update immediately)...")
@@ -214,24 +214,12 @@ def generate_report():
                         ))
                         conn.commit()
                         print("✅ Đã lưu Daily Insight vào Database.")
-                        
-                        # # Generate Markdown Report
-                        # report_file = f"daily_report_{daily_insight.date}.md"
-                        # with open(report_file, "w", encoding="utf-8") as f:
-                        #     f.write(f"# 📊 Báo Cáo Thị Trường Ngày {daily_insight.date}\n\n")
-                        #     f.write(f"### 🌡️ Tâm Lý Thị Trường: {daily_insight.market_sentiment_overlay}\n\n")
-                        #     f.write("## 🔥 Hot Topics\n")
-                        #     for topic in daily_insight.hot_topics:
-                        #         f.write(f"- {topic}\n")
-                        #     f.write("\n## 👁️ Hidden Insights\n")
-                        #     for insight in daily_insight.hidden_insights:
-                        #         f.write(f"- {insight}\n")
-                        #     f.write("\n## 🧭 Phân Tích Điều Hướng Truyền Thông\n")
-                        #     f.write(f"{daily_insight.media_steering_analysis}\n")
-                        # print(f"📄 Đã xuất báo cáo Markdown: {report_file}")
+                        return daily_insight, len(all_processed_analyses)
                         
                     except Exception as e:
                         print(f"❌ DB Error saving insight: {e}")
+            
+            return None, len(all_processed_analyses)
 
 if __name__ == "__main__":
     generate_report()
