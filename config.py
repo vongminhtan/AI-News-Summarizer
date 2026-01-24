@@ -33,7 +33,7 @@ RSS_URLS = [
 ]
 
 # --- AI CLI Config ---
-AI_ENGINE = "hybrid" # Hoặc "gemini", "codex", "hybrid"
+AI_ENGINE = "gemini" # Hoặc "gemini", "codex", "hybrid"
 
 # Gemini Settings
 GEMINI_MODEL = "gemini-3-pro-preview"
